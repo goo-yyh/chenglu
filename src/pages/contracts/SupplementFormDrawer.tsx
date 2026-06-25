@@ -175,7 +175,7 @@ export default function SupplementFormDrawer({
   const paymentColumns = useMemo<ColumnsType<PaymentRow>>(
     () => [
       {
-        title: "收款金额（万元）",
+        title: "收款金额（元）",
         dataIndex: "amount",
         width: 180,
         render: (_, row) => {
@@ -189,7 +189,7 @@ export default function SupplementFormDrawer({
               min={0}
               precision={2}
               value={value.amount}
-              addonAfter="万元"
+              suffix="元"
               style={{ width: "100%" }}
               onChange={(amount) => updatePaymentDraft(row.key, { amount })}
             />
@@ -326,11 +326,11 @@ export default function SupplementFormDrawer({
         <div className="form-section">
           <div className="form-section-title">基础信息</div>
           <Form.Item
-            label="增加合同金额（万元）"
+            label="增加合同金额（元）"
             name="supplementAmount"
             rules={[{ required: true, message: "请输入增加合同金额" }]}
           >
-            <InputNumber min={0} precision={2} addonAfter="万元" style={{ width: "100%" }} />
+            <InputNumber min={0} precision={2} suffix="元" style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item
             label="增补合同日期"
@@ -345,8 +345,8 @@ export default function SupplementFormDrawer({
               bizType="contract_supplement"
               bizId={attachmentBizId}
               category="supplement_file"
+              acceptKind="documents"
               compact
-              maxCount={1}
             />
           </div>
         </div>

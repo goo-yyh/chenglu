@@ -16,6 +16,9 @@ const APP_DATA_DIR_NAME: &str = "MyAdminData";
 const LOGIN_ACCOUNT: &str = "chenglu";
 const LOGIN_PASSWORD_SHA256: &str =
     "615ed7fb1504b0c724a296d7a69e6c7b2f9ea2c57c1d8206c5afdf392ebdfd25";
+const BOND_TYPE_REMITTANCE: &str = "汇款";
+const BOND_TYPE_GUARANTEE: &str = "保函";
+const WARRANTY_BOND_TYPE_RESERVE: &str = "合同内金额预留";
 
 struct AppState {
     db: Mutex<Option<Connection>>,
@@ -123,9 +126,13 @@ struct ContractListItem {
     performance_bond_type: Option<String>,
     performance_bond_return_due_at: Option<String>,
     performance_bond_returned: bool,
+    prepayment_enabled: bool,
+    prepayment_amount: Option<f64>,
+    prepayment_type: Option<String>,
     warranty_bond_enabled: bool,
     warranty_bond_amount: Option<f64>,
     warranty_bond_type: Option<String>,
+    warranty_bond_reserve_percent: Option<i64>,
     warranty_bond_return_due_at: Option<String>,
     warranty_bond_returned: bool,
     paid_amount: f64,
@@ -134,6 +141,16 @@ struct ContractListItem {
     attachment_summary: AttachmentSummary,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ContractListSummary {
+    contract_amount: f64,
+    paid_amount: f64,
+    unpaid_amount: f64,
+    performance_bond_unreturned_amount: f64,
+    warranty_bond_unreturned_amount: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,6 +175,7 @@ struct ContractListResult {
     total: usize,
     page: usize,
     page_size: usize,
+    summary: ContractListSummary,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -186,9 +204,13 @@ struct ContractInput {
     performance_bond_type: Option<String>,
     performance_bond_return_due_at: Option<String>,
     performance_bond_returned: bool,
+    prepayment_enabled: bool,
+    prepayment_amount: Option<f64>,
+    prepayment_type: Option<String>,
     warranty_bond_enabled: bool,
     warranty_bond_amount: Option<f64>,
     warranty_bond_type: Option<String>,
+    warranty_bond_reserve_percent: Option<i64>,
     warranty_bond_return_due_at: Option<String>,
     warranty_bond_returned: bool,
 }
@@ -347,8 +369,10 @@ fn list_contracts(
             "SELECT id, contract_date, project_name, owner_unit, contract_amount,
                     performance_bond_enabled, performance_bond_amount, performance_bond_type,
                     performance_bond_return_due_at, performance_bond_returned,
+                    prepayment_enabled, prepayment_amount, prepayment_type,
                     warranty_bond_enabled, warranty_bond_amount, warranty_bond_type,
-                    warranty_bond_return_due_at, warranty_bond_returned,
+                    warranty_bond_reserve_percent, warranty_bond_return_due_at,
+                    warranty_bond_returned,
                     created_at, updated_at
              FROM contracts
              WHERE deleted_at IS NULL
@@ -369,6 +393,7 @@ fn list_contracts(
         let page = query.page.unwrap_or(1).max(1);
         let page_size = query.page_size.unwrap_or(12).max(1);
         let total = filtered.len();
+        let summary = summarize_contracts(conn, &filtered)?;
         let items = filtered
             .into_iter()
             .skip((page - 1) * page_size)
@@ -380,6 +405,7 @@ fn list_contracts(
             total,
             page,
             page_size,
+            summary,
         })
     })
 }
@@ -427,11 +453,13 @@ fn update_contract(
              SET contract_date = ?1, project_name = ?2, owner_unit = ?3, contract_amount = ?4,
                  performance_bond_enabled = ?5, performance_bond_amount = ?6,
                  performance_bond_type = ?7, performance_bond_return_due_at = ?8,
-                 performance_bond_returned = ?9, warranty_bond_enabled = ?10,
-                 warranty_bond_amount = ?11, warranty_bond_type = ?12,
-                 warranty_bond_return_due_at = ?13, warranty_bond_returned = ?14,
-                 updated_at = ?15
-             WHERE id = ?16 AND deleted_at IS NULL",
+                 performance_bond_returned = ?9, prepayment_enabled = ?10,
+                 prepayment_amount = ?11, prepayment_type = ?12,
+                 warranty_bond_enabled = ?13, warranty_bond_amount = ?14,
+                 warranty_bond_type = ?15, warranty_bond_reserve_percent = ?16,
+                 warranty_bond_return_due_at = ?17, warranty_bond_returned = ?18,
+                 updated_at = ?19
+             WHERE id = ?20 AND deleted_at IS NULL",
             params![
                 input.contract.contract_date,
                 input.contract.project_name.trim(),
@@ -442,9 +470,13 @@ fn update_contract(
                 input.contract.performance_bond_type,
                 input.contract.performance_bond_return_due_at,
                 bool_int(input.contract.performance_bond_returned),
+                bool_int(input.contract.prepayment_enabled),
+                input.contract.prepayment_amount,
+                input.contract.prepayment_type,
                 bool_int(input.contract.warranty_bond_enabled),
                 input.contract.warranty_bond_amount,
                 input.contract.warranty_bond_type,
+                input.contract.warranty_bond_reserve_percent,
                 input.contract.warranty_bond_return_due_at,
                 bool_int(input.contract.warranty_bond_returned),
                 now,
@@ -588,14 +620,6 @@ fn add_attachment(
     if biz_id.trim().is_empty() {
         return Err("附件缺少业务记录 ID".to_string());
     }
-    if category != "invoice" {
-        let existing_count = with_conn(&state, |conn| {
-            active_attachment_count(conn, &biz_type, &biz_id, &category)
-        })?;
-        if existing_count > 0 {
-            return Err("该附件类型只能上传 1 份，请先删除后再上传".to_string());
-        }
-    }
 
     let source = PathBuf::from(source_path);
     if !source.is_file() {
@@ -613,8 +637,8 @@ fn add_attachment(
         .and_then(|value| value.to_str())
         .unwrap_or("bin")
         .to_lowercase();
-    if ext != "pdf" {
-        return Err("合同附件仅支持 PDF 格式".to_string());
+    if !allowed_attachment_extensions(&category).contains(&ext.as_str()) {
+        return Err("附件格式不符合当前附件类型要求".to_string());
     }
     let stored_file_name = format!("{id}.{ext}");
     let now = Local::now();
@@ -898,6 +922,16 @@ fn run_migrations(conn: &mut Connection) -> Result<(), String> {
             "006_attachment_categories",
             include_str!("../migrations/006_attachment_categories.sql"),
         ),
+        (
+            7,
+            "007_contract_financial_details",
+            include_str!("../migrations/007_contract_financial_details.sql"),
+        ),
+        (
+            8,
+            "008_amount_units_to_yuan",
+            include_str!("../migrations/008_amount_units_to_yuan.sql"),
+        ),
     ];
 
     conn.execute_batch(migrations[0].2).map_err(to_string)?;
@@ -931,10 +965,13 @@ fn insert_contract(tx: &Transaction<'_>, id: &str, contract: &ContractInput) -> 
          (id, contract_date, project_name, owner_unit, contract_amount,
           performance_bond_enabled, performance_bond_amount, performance_bond_type,
           performance_bond_return_due_at, performance_bond_returned,
+          prepayment_enabled, prepayment_amount, prepayment_type,
           warranty_bond_enabled, warranty_bond_amount, warranty_bond_type,
-          warranty_bond_return_due_at, warranty_bond_returned,
+          warranty_bond_reserve_percent, warranty_bond_return_due_at,
+          warranty_bond_returned,
           created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                 ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20)",
         params![
             id,
             contract.contract_date,
@@ -946,9 +983,13 @@ fn insert_contract(tx: &Transaction<'_>, id: &str, contract: &ContractInput) -> 
             contract.performance_bond_type,
             contract.performance_bond_return_due_at,
             bool_int(contract.performance_bond_returned),
+            bool_int(contract.prepayment_enabled),
+            contract.prepayment_amount,
+            contract.prepayment_type,
             bool_int(contract.warranty_bond_enabled),
             contract.warranty_bond_amount,
             contract.warranty_bond_type,
+            contract.warranty_bond_reserve_percent,
             contract.warranty_bond_return_due_at,
             bool_int(contract.warranty_bond_returned),
             now
@@ -1100,8 +1141,10 @@ fn contract_detail(conn: &Connection, id: &str) -> rusqlite::Result<ContractDeta
         "SELECT id, contract_date, project_name, owner_unit, contract_amount,
                 performance_bond_enabled, performance_bond_amount, performance_bond_type,
                 performance_bond_return_due_at, performance_bond_returned,
+                prepayment_enabled, prepayment_amount, prepayment_type,
                 warranty_bond_enabled, warranty_bond_amount, warranty_bond_type,
-                warranty_bond_return_due_at, warranty_bond_returned,
+                warranty_bond_reserve_percent, warranty_bond_return_due_at,
+                warranty_bond_returned,
                 created_at, updated_at
          FROM contracts
          WHERE id = ?1 AND deleted_at IS NULL",
@@ -1165,13 +1208,17 @@ fn contract_list_item_from_row(row: &Row<'_>) -> rusqlite::Result<ContractListIt
         performance_bond_type: row.get(7)?,
         performance_bond_return_due_at: row.get(8)?,
         performance_bond_returned: int_bool(row.get::<_, i64>(9)?),
-        warranty_bond_enabled: int_bool(row.get::<_, i64>(10)?),
-        warranty_bond_amount: row.get(11)?,
-        warranty_bond_type: row.get(12)?,
-        warranty_bond_return_due_at: row.get(13)?,
-        warranty_bond_returned: int_bool(row.get::<_, i64>(14)?),
-        created_at: row.get(15)?,
-        updated_at: row.get(16)?,
+        prepayment_enabled: int_bool(row.get::<_, i64>(10)?),
+        prepayment_amount: row.get(11)?,
+        prepayment_type: row.get(12)?,
+        warranty_bond_enabled: int_bool(row.get::<_, i64>(13)?),
+        warranty_bond_amount: row.get(14)?,
+        warranty_bond_type: row.get(15)?,
+        warranty_bond_reserve_percent: row.get(16)?,
+        warranty_bond_return_due_at: row.get(17)?,
+        warranty_bond_returned: int_bool(row.get::<_, i64>(18)?),
+        created_at: row.get(19)?,
+        updated_at: row.get(20)?,
         paid_amount: 0.0,
         unpaid_amount: 0.0,
         supplement_count: 0,
@@ -1214,6 +1261,41 @@ fn enrich_contract_list_item(
     Ok(())
 }
 
+fn summarize_contracts(
+    conn: &Connection,
+    items: &[ContractListItem],
+) -> rusqlite::Result<ContractListSummary> {
+    let mut summary = ContractListSummary {
+        contract_amount: 0.0,
+        paid_amount: 0.0,
+        unpaid_amount: 0.0,
+        performance_bond_unreturned_amount: 0.0,
+        warranty_bond_unreturned_amount: 0.0,
+    };
+
+    for item in items {
+        let supplement_amount = sum_contract_supplement_amounts(conn, &item.id)?;
+        let supplement_paid = sum_contract_supplement_payments(conn, &item.id)?;
+        let total_contract_amount = item.contract_amount + supplement_amount;
+        let total_paid_amount = item.paid_amount + supplement_paid;
+        summary.contract_amount += total_contract_amount;
+        summary.paid_amount += total_paid_amount;
+        summary.unpaid_amount += total_contract_amount - total_paid_amount;
+        if bond_requires_return(item.performance_bond_enabled, item.performance_bond_type.as_deref())
+            && !item.performance_bond_returned
+        {
+            summary.performance_bond_unreturned_amount += item.performance_bond_amount.unwrap_or(0.0);
+        }
+        if bond_requires_return(item.warranty_bond_enabled, item.warranty_bond_type.as_deref())
+            && !item.warranty_bond_returned
+        {
+            summary.warranty_bond_unreturned_amount += item.warranty_bond_amount.unwrap_or(0.0);
+        }
+    }
+
+    Ok(summary)
+}
+
 fn query_text(value: &Option<String>) -> Option<&str> {
     value
         .as_deref()
@@ -1226,6 +1308,10 @@ fn contains_query_text(value: &str, keyword: &Option<String>) -> bool {
         return true;
     };
     value.to_lowercase().contains(&keyword.to_lowercase())
+}
+
+fn bond_requires_return(enabled: bool, bond_type: Option<&str>) -> bool {
+    enabled && bond_type != Some(BOND_TYPE_GUARANTEE)
 }
 
 fn matches_contract_list_query(
@@ -1259,12 +1345,16 @@ fn matches_contract_list_query(
         }
     }
     if let Some(returned) = query.performance_bond_returned {
-        if !item.performance_bond_enabled || item.performance_bond_returned != returned {
+        if !bond_requires_return(item.performance_bond_enabled, item.performance_bond_type.as_deref())
+            || item.performance_bond_returned != returned
+        {
             return Ok(false);
         }
     }
     if let Some(returned) = query.warranty_bond_returned {
-        if !item.warranty_bond_enabled || item.warranty_bond_returned != returned {
+        if !bond_requires_return(item.warranty_bond_enabled, item.warranty_bond_type.as_deref())
+            || item.warranty_bond_returned != returned
+        {
             return Ok(false);
         }
     }
@@ -1430,30 +1520,23 @@ fn attachment_summary_for(
     })
 }
 
-fn active_attachment_count(
-    conn: &Connection,
-    biz_type: &str,
-    biz_id: &str,
-    category: &str,
-) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT COUNT(1)
-         FROM attachments
-         WHERE biz_type = ?1
-           AND biz_id = ?2
-           AND COALESCE(category, CASE WHEN biz_type = 'contract_supplement' THEN 'supplement_file' ELSE 'contract_file' END) = ?3
-           AND deleted_at IS NULL",
-        params![biz_type, biz_id, category],
-        |row| row.get(0),
-    )
-}
-
 fn validate_attachment_category(biz_type: &str, category: &str) -> Result<String, String> {
     let category = category.trim();
     let valid = match biz_type {
         "contract" => matches!(
             category,
-            "contract_file" | "award_notice" | "acceptance_report" | "invoice"
+            "contract_file"
+                | "award_notice"
+                | "tender_file"
+                | "bid_file"
+                | "acceptance_report"
+                | "invoice"
+                | "performance_remittance_voucher"
+                | "performance_guarantee_voucher"
+                | "prepayment_remittance_voucher"
+                | "prepayment_guarantee_voucher"
+                | "warranty_remittance_voucher"
+                | "warranty_guarantee_voucher"
         ),
         "contract_supplement" => category == "supplement_file",
         _ => false,
@@ -1462,6 +1545,18 @@ fn validate_attachment_category(biz_type: &str, category: &str) -> Result<String
         Ok(category.to_string())
     } else {
         Err("不支持的附件类型".to_string())
+    }
+}
+
+fn allowed_attachment_extensions(category: &str) -> &'static [&'static str] {
+    match category {
+        "performance_remittance_voucher"
+        | "prepayment_remittance_voucher"
+        | "warranty_remittance_voucher" => &["jpg", "jpeg", "png", "pdf"],
+        "performance_guarantee_voucher"
+        | "prepayment_guarantee_voucher"
+        | "warranty_guarantee_voucher" => &["pdf"],
+        _ => &["doc", "docx", "xls", "xlsx", "pdf"],
     }
 }
 
@@ -1480,6 +1575,35 @@ fn count_contract_supplements(conn: &Connection, contract_id: &str) -> rusqlite:
         "SELECT COUNT(*)
          FROM contract_supplements
          WHERE contract_id = ?1 AND deleted_at IS NULL",
+        params![contract_id],
+        |row| row.get(0),
+    )
+}
+
+fn sum_contract_supplement_amounts(
+    conn: &Connection,
+    contract_id: &str,
+) -> rusqlite::Result<f64> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(supplement_amount), 0)
+         FROM contract_supplements
+         WHERE contract_id = ?1 AND deleted_at IS NULL",
+        params![contract_id],
+        |row| row.get(0),
+    )
+}
+
+fn sum_contract_supplement_payments(
+    conn: &Connection,
+    contract_id: &str,
+) -> rusqlite::Result<f64> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(sp.amount), 0)
+         FROM supplement_payments sp
+         JOIN contract_supplements cs ON cs.id = sp.supplement_id
+         WHERE cs.contract_id = ?1
+           AND cs.deleted_at IS NULL
+           AND sp.deleted_at IS NULL",
         params![contract_id],
         |row| row.get(0),
     )
@@ -1519,14 +1643,42 @@ fn validate_contract_payload(input: &ContractPayload) -> Result<(), String> {
         return Err("合同金额不能小于 0".to_string());
     }
     if input.contract.performance_bond_enabled {
-        validate_non_negative(input.contract.performance_bond_amount, "履约保证金")?;
-        if is_blank(input.contract.performance_bond_return_due_at.as_deref()) {
+        let bond_type = validate_bond_type(
+            input.contract.performance_bond_type.as_deref(),
+            "履约保证金形式",
+            false,
+        )?;
+        validate_non_negative(input.contract.performance_bond_amount, "履约保证金金额")?;
+        if bond_type != BOND_TYPE_GUARANTEE
+            && is_blank(input.contract.performance_bond_return_due_at.as_deref())
+        {
             return Err("履约保证金约定退还时间不能为空".to_string());
         }
     }
+    if input.contract.prepayment_enabled {
+        validate_bond_type(
+            input.contract.prepayment_type.as_deref(),
+            "预付款形式",
+            false,
+        )?;
+        validate_non_negative(input.contract.prepayment_amount, "预付款金额")?;
+    }
     if input.contract.warranty_bond_enabled {
-        validate_non_negative(input.contract.warranty_bond_amount, "质保金")?;
-        if is_blank(input.contract.warranty_bond_return_due_at.as_deref()) {
+        let bond_type = validate_bond_type(
+            input.contract.warranty_bond_type.as_deref(),
+            "质保金形式",
+            true,
+        )?;
+        validate_non_negative(input.contract.warranty_bond_amount, "质保金金额")?;
+        if bond_type == WARRANTY_BOND_TYPE_RESERVE {
+            match input.contract.warranty_bond_reserve_percent {
+                Some(percent) if (1..=10).contains(&percent) => {}
+                _ => return Err("质保金预留比例必须在 1% 到 10% 之间".to_string()),
+            }
+        }
+        if bond_type != BOND_TYPE_GUARANTEE
+            && is_blank(input.contract.warranty_bond_return_due_at.as_deref())
+        {
             return Err("质保金约定退还时间不能为空".to_string());
         }
     }
@@ -1633,7 +1785,7 @@ fn create_backup_inner(
         "INSERT INTO backup_records
          (id, backup_type, file_name, relative_path, file_size, sha256, app_version,
           database_version, status, description, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, '0.1.0', 5, 'created', ?7, ?8)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, '0.1.0', 8, 'created', ?7, ?8)",
         params![
             id,
             backup_type,
@@ -1783,6 +1935,25 @@ fn mime_from_ext(ext: &str) -> Option<&'static str> {
         "gif" => Some("image/gif"),
         "webp" => Some("image/webp"),
         _ => None,
+    }
+}
+
+fn validate_bond_type<'a>(
+    value: Option<&'a str>,
+    label: &str,
+    allow_reserve: bool,
+) -> Result<&'a str, String> {
+    let value = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{label}不能为空"))?;
+    let valid = value == BOND_TYPE_REMITTANCE
+        || value == BOND_TYPE_GUARANTEE
+        || (allow_reserve && value == WARRANTY_BOND_TYPE_RESERVE);
+    if valid {
+        Ok(value)
+    } else {
+        Err(format!("{label}不支持"))
     }
 }
 

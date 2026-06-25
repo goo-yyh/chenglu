@@ -10,6 +10,7 @@ import type {
   ContractDetail,
   PaymentRecord,
 } from "../../types/contract";
+import { BOND_TYPE_GUARANTEE, WARRANTY_BOND_TYPE_RESERVE } from "../../types/contract";
 import { CONTRACT_ATTACHMENT_GROUPS } from "../../types/attachment";
 import type { SupplementListItem } from "../../types/supplement";
 import { getErrorMessage } from "../../utils/errors";
@@ -18,6 +19,17 @@ interface ContractDetailDrawerProps {
   open: boolean;
   contractId?: string;
   onClose: () => void;
+}
+
+function bondNeedsReturn(enabled: boolean, type?: string | null) {
+  return enabled && type !== BOND_TYPE_GUARANTEE;
+}
+
+function refundStatus(enabled: boolean, type: string | null | undefined, returned: boolean) {
+  if (!bondNeedsReturn(enabled, type)) {
+    return "-";
+  }
+  return returned ? "已退还" : "未退还";
 }
 
 export default function ContractDetailDrawer({
@@ -51,7 +63,7 @@ export default function ContractDetailDrawer({
 
   const paymentColumns: ColumnsType<PaymentRecord> = [
     {
-      title: "收款金额（万元）",
+      title: "收款金额（元）",
       dataIndex: "amount",
       render: (value) => <MoneyText value={value} />,
     },
@@ -61,7 +73,7 @@ export default function ContractDetailDrawer({
   const commissionColumns: ColumnsType<CommissionRecord> = [
     { title: "业务员", dataIndex: "salesperson" },
     {
-      title: "提成（万元）",
+      title: "提成（元）",
       dataIndex: "commissionAmount",
       render: (value) => <MoneyText value={value} />,
     },
@@ -70,18 +82,18 @@ export default function ContractDetailDrawer({
 
   const supplementColumns: ColumnsType<SupplementListItem> = [
     {
-      title: "增加合同金额（万元）",
+      title: "增加合同金额（元）",
       dataIndex: "supplementAmount",
       render: (value) => <MoneyText value={value} />,
     },
     { title: "增补合同日期", dataIndex: "supplementDate" },
     {
-      title: "增补合同收款金额（万元）",
+      title: "增补合同收款金额（元）",
       dataIndex: "paidAmount",
       render: (value) => <MoneyText value={value} />,
     },
     {
-      title: "未收款金额（万元）",
+      title: "未收款金额（元）",
       dataIndex: "unpaidAmount",
       render: (value) => <MoneyText value={value} />,
     },
@@ -95,16 +107,16 @@ export default function ContractDetailDrawer({
             <Descriptions.Item label="时间">{detail.contractDate}</Descriptions.Item>
             <Descriptions.Item label="项目名称">{detail.projectName}</Descriptions.Item>
             <Descriptions.Item label="业主单位">{detail.ownerUnit}</Descriptions.Item>
-            <Descriptions.Item label="合同金额（万元）">
+            <Descriptions.Item label="合同金额（元）">
               <MoneyText value={detail.contractAmount} />
             </Descriptions.Item>
-            <Descriptions.Item label="初始合同已收款（万元）">
+            <Descriptions.Item label="初始合同已收款（元）">
               <MoneyText value={detail.paidAmount} />
             </Descriptions.Item>
-            <Descriptions.Item label="初始合同未收款（万元）">
+            <Descriptions.Item label="初始合同未收款（元）">
               <MoneyText value={detail.unpaidAmount} />
             </Descriptions.Item>
-            <Descriptions.Item label="总合同金额（万元）">
+            <Descriptions.Item label="总合同金额（元）">
               <MoneyText value={detail.totalAmount} />
             </Descriptions.Item>
             <Descriptions.Item label="合同附件">
@@ -122,7 +134,7 @@ export default function ContractDetailDrawer({
               <Descriptions.Item label="是否有履约保证金">
                 {detail.performanceBondEnabled ? "是" : "否"}
               </Descriptions.Item>
-              <Descriptions.Item label="履约保证金（万元）">
+              <Descriptions.Item label="履约保证金（元）">
                 {detail.performanceBondEnabled ? (
                   <MoneyText value={detail.performanceBondAmount} />
                 ) : (
@@ -133,12 +145,89 @@ export default function ContractDetailDrawer({
                 {detail.performanceBondType || "-"}
               </Descriptions.Item>
               <Descriptions.Item label="约定退还时间">
-                {detail.performanceBondReturnDueAt || "-"}
+                {bondNeedsReturn(detail.performanceBondEnabled, detail.performanceBondType)
+                  ? detail.performanceBondReturnDueAt || "-"
+                  : "-"}
               </Descriptions.Item>
               <Descriptions.Item label="是否已经退还">
-                {detail.performanceBondReturned ? "已退还" : "未退还"}
+                {refundStatus(
+                  detail.performanceBondEnabled,
+                  detail.performanceBondType,
+                  detail.performanceBondReturned,
+                )}
               </Descriptions.Item>
             </Descriptions>
+            {detail.performanceBondEnabled && detail.performanceBondType === BOND_TYPE_GUARANTEE && (
+              <div className="attachment-field">
+                <Typography.Text type="secondary">保函凭证</Typography.Text>
+                <AttachmentList
+                  bizType="contract"
+                  bizId={detail.id}
+                  category="performance_guarantee_voucher"
+                  acceptKind="pdf"
+                  readonly
+                  compact
+                />
+              </div>
+            )}
+            {detail.performanceBondEnabled && detail.performanceBondType !== BOND_TYPE_GUARANTEE && (
+              <div className="attachment-field">
+                <Typography.Text type="secondary">汇款凭证</Typography.Text>
+                <AttachmentList
+                  bizType="contract"
+                  bizId={detail.id}
+                  category="performance_remittance_voucher"
+                  acceptKind="remittanceVoucher"
+                  readonly
+                  compact
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="form-section">
+            <Typography.Title level={5}>预付款</Typography.Title>
+            <Descriptions column={2} bordered size="small">
+              <Descriptions.Item label="是否有预付款">
+                {detail.prepaymentEnabled ? "是" : "否"}
+              </Descriptions.Item>
+              <Descriptions.Item label="预付款形式">
+                {detail.prepaymentType || "-"}
+              </Descriptions.Item>
+              <Descriptions.Item label="金额（元）">
+                {detail.prepaymentEnabled ? (
+                  <MoneyText value={detail.prepaymentAmount} />
+                ) : (
+                  "无"
+                )}
+              </Descriptions.Item>
+            </Descriptions>
+            {detail.prepaymentEnabled && detail.prepaymentType === BOND_TYPE_GUARANTEE && (
+              <div className="attachment-field">
+                <Typography.Text type="secondary">保函凭证</Typography.Text>
+                <AttachmentList
+                  bizType="contract"
+                  bizId={detail.id}
+                  category="prepayment_guarantee_voucher"
+                  acceptKind="pdf"
+                  readonly
+                  compact
+                />
+              </div>
+            )}
+            {detail.prepaymentEnabled && detail.prepaymentType !== BOND_TYPE_GUARANTEE && (
+              <div className="attachment-field">
+                <Typography.Text type="secondary">汇款凭证</Typography.Text>
+                <AttachmentList
+                  bizType="contract"
+                  bizId={detail.id}
+                  category="prepayment_remittance_voucher"
+                  acceptKind="remittanceVoucher"
+                  readonly
+                  compact
+                />
+              </div>
+            )}
           </div>
 
           <div className="form-section">
@@ -147,7 +236,7 @@ export default function ContractDetailDrawer({
               <Descriptions.Item label="是否有质保金">
                 {detail.warrantyBondEnabled ? "是" : "否"}
               </Descriptions.Item>
-              <Descriptions.Item label="质保金（万元）">
+              <Descriptions.Item label="质保金（元）">
                 {detail.warrantyBondEnabled ? (
                   <MoneyText value={detail.warrantyBondAmount} />
                 ) : (
@@ -157,13 +246,54 @@ export default function ContractDetailDrawer({
               <Descriptions.Item label="质保金形式">
                 {detail.warrantyBondType || "-"}
               </Descriptions.Item>
+              {detail.warrantyBondType === WARRANTY_BOND_TYPE_RESERVE && (
+                <Descriptions.Item label="预留比例">
+                  {detail.warrantyBondReservePercent
+                    ? `${detail.warrantyBondReservePercent}%`
+                    : "-"}
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="约定退还时间">
-                {detail.warrantyBondReturnDueAt || "-"}
+                {bondNeedsReturn(detail.warrantyBondEnabled, detail.warrantyBondType)
+                  ? detail.warrantyBondReturnDueAt || "-"
+                  : "-"}
               </Descriptions.Item>
               <Descriptions.Item label="是否已经退还">
-                {detail.warrantyBondReturned ? "已退还" : "未退还"}
+                {refundStatus(
+                  detail.warrantyBondEnabled,
+                  detail.warrantyBondType,
+                  detail.warrantyBondReturned,
+                )}
               </Descriptions.Item>
             </Descriptions>
+            {detail.warrantyBondEnabled && detail.warrantyBondType === BOND_TYPE_GUARANTEE && (
+              <div className="attachment-field">
+                <Typography.Text type="secondary">保函凭证</Typography.Text>
+                <AttachmentList
+                  bizType="contract"
+                  bizId={detail.id}
+                  category="warranty_guarantee_voucher"
+                  acceptKind="pdf"
+                  readonly
+                  compact
+                />
+              </div>
+            )}
+            {detail.warrantyBondEnabled &&
+              detail.warrantyBondType !== BOND_TYPE_GUARANTEE &&
+              detail.warrantyBondType !== WARRANTY_BOND_TYPE_RESERVE && (
+              <div className="attachment-field">
+                <Typography.Text type="secondary">汇款凭证</Typography.Text>
+                <AttachmentList
+                  bizType="contract"
+                  bizId={detail.id}
+                  category="warranty_remittance_voucher"
+                  acceptKind="remittanceVoucher"
+                  readonly
+                  compact
+                />
+              </div>
+            )}
           </div>
 
           <div className="form-section">
@@ -211,9 +341,9 @@ export default function ContractDetailDrawer({
                     bizType="contract"
                     bizId={detail.id}
                     category={group.category}
+                    acceptKind={group.acceptKind}
                     readonly
                     compact
-                    maxCount={group.maxCount}
                   />
                 </div>
               ))}

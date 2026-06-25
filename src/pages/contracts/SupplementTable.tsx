@@ -54,7 +54,7 @@ export default function SupplementTable({
 
   const columns: ColumnsType<SupplementListItem> = [
     {
-      title: "增加合同金额（万元）",
+      title: "增加合同金额（元）",
       dataIndex: "supplementAmount",
       width: "18%",
       render: (value) => <MoneyText value={value} />,
@@ -76,13 +76,13 @@ export default function SupplementTable({
         ),
     },
     {
-      title: "增补合同收款金额（万元）",
+      title: "增补合同收款金额（元）",
       dataIndex: "paidAmount",
       width: "18%",
       render: (value) => <MoneyText value={value} />,
     },
     {
-      title: "未收款金额（万元）",
+      title: "未收款金额（元）",
       dataIndex: "unpaidAmount",
       width: "16%",
       render: (value) => <MoneyText value={value} />,

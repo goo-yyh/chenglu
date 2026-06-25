@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  AttachmentAcceptKind,
   AttachmentBizType,
   AttachmentCategory,
   AttachmentRecord,
@@ -11,18 +12,40 @@ import {
 } from "./mockStore";
 import { invokeOrMock, isTauriRuntime } from "./tauri";
 
-export async function pickSourcePaths() {
+const ATTACHMENT_FILTERS: Record<
+  AttachmentAcceptKind,
+  { title: string; name: string; extensions: string[] }
+> = {
+  documents: {
+    title: "选择附件",
+    name: "Word、Excel、PDF 文件",
+    extensions: ["doc", "docx", "xls", "xlsx", "pdf"],
+  },
+  remittanceVoucher: {
+    title: "选择汇款凭证",
+    name: "图片或 PDF 文件",
+    extensions: ["jpg", "jpeg", "png", "pdf"],
+  },
+  pdf: {
+    title: "选择 PDF 附件",
+    name: "PDF 文件",
+    extensions: ["pdf"],
+  },
+};
+
+export async function pickSourcePaths(acceptKind: AttachmentAcceptKind = "documents") {
   if (!isTauriRuntime()) {
     return [];
   }
+  const filter = ATTACHMENT_FILTERS[acceptKind];
   const selected = await open({
     multiple: true,
     directory: false,
-    title: "选择 PDF 附件",
+    title: filter.title,
     filters: [
       {
-        name: "PDF 文件",
-        extensions: ["pdf"],
+        name: filter.name,
+        extensions: filter.extensions,
       },
     ],
   });

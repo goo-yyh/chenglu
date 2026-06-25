@@ -39,7 +39,7 @@ export default function SupplementDetailDrawer({
 
   const paymentColumns: ColumnsType<PaymentRecord> = [
     {
-      title: "收款金额（万元）",
+      title: "收款金额（元）",
       dataIndex: "amount",
       render: (value) => <MoneyText value={value} />,
     },
@@ -54,16 +54,16 @@ export default function SupplementDetailDrawer({
       {detail && (
         <>
           <Descriptions column={1} bordered size="small">
-            <Descriptions.Item label="增加合同金额（万元）">
+            <Descriptions.Item label="增加合同金额（元）">
               <MoneyText value={detail.supplementAmount} />
             </Descriptions.Item>
             <Descriptions.Item label="增补合同日期">
               {detail.supplementDate}
             </Descriptions.Item>
-            <Descriptions.Item label="增补合同收款金额（万元）">
+            <Descriptions.Item label="增补合同收款金额（元）">
               <MoneyText value={detail.paidAmount} />
             </Descriptions.Item>
-            <Descriptions.Item label="未收款金额（万元）">
+            <Descriptions.Item label="未收款金额（元）">
               <MoneyText value={detail.unpaidAmount} />
             </Descriptions.Item>
             <Descriptions.Item label="附件">
@@ -92,9 +92,9 @@ export default function SupplementDetailDrawer({
               bizType="contract_supplement"
               bizId={detail.id}
               category="supplement_file"
+              acceptKind="documents"
               readonly
               compact
-              maxCount={1}
             />
           </div>
         </>

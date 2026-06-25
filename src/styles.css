@@ -205,6 +205,39 @@ body {
   padding-inline: 4px 0;
 }
 
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.summary-grid .ant-statistic {
+  min-width: 0;
+  padding: 14px 16px;
+  border-right: 1px solid #edf0f5;
+}
+
+.summary-grid .ant-statistic:last-child {
+  border-right: 0;
+}
+
+.summary-grid .ant-statistic-title {
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.summary-grid .ant-statistic-content {
+  color: #1f2937;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
 .section-toolbar.ant-space {
   display: flex;
   width: 100%;

@@ -7,6 +7,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Statistic,
   Table,
   Tag,
   Tooltip,
@@ -24,7 +25,12 @@ import type { Dayjs } from "dayjs";
 import { useEffect, useMemo, useState } from "react";
 import MoneyText from "../../components/MoneyText";
 import { deleteContract, listContracts } from "../../services/contractApi";
-import type { ContractListItem, ContractListQuery } from "../../types/contract";
+import { BOND_TYPE_GUARANTEE } from "../../types/contract";
+import type {
+  ContractListItem,
+  ContractListQuery,
+  ContractListSummary,
+} from "../../types/contract";
 import { getErrorMessage } from "../../utils/errors";
 import ContractDetailDrawer from "./ContractDetailDrawer";
 import ContractFormDrawer from "./ContractFormDrawer";
@@ -34,6 +40,13 @@ import SupplementTable from "./SupplementTable";
 
 const { RangePicker } = DatePicker;
 const DEFAULT_PAGE_SIZE = 12;
+const EMPTY_SUMMARY: ContractListSummary = {
+  contractAmount: 0,
+  paidAmount: 0,
+  unpaidAmount: 0,
+  performanceBondUnreturnedAmount: 0,
+  warrantyBondUnreturnedAmount: 0,
+};
 
 interface ContractFilterValues {
   contractDateRange?: [Dayjs, Dayjs];
@@ -48,6 +61,10 @@ interface ContractFilterValues {
 function optionalText(value?: string) {
   const trimmed = value?.trim();
   return trimmed || undefined;
+}
+
+function bondNeedsReturn(enabled: boolean, type?: string | null) {
+  return enabled && type !== BOND_TYPE_GUARANTEE;
 }
 
 function buildContractListQuery(
@@ -75,6 +92,7 @@ export default function ContractListPage() {
   const [rows, setRows] = useState<ContractListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<ContractListSummary>(EMPTY_SUMMARY);
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [query, setQuery] = useState<ContractListQuery>({
     page: 1,
@@ -100,6 +118,7 @@ export default function ContractListPage() {
       const result = await listContracts(nextQuery);
       setRows(result.items);
       setTotal(result.total);
+      setSummary(result.summary || EMPTY_SUMMARY);
       setQuery({
         ...nextQuery,
         page: result.page,
@@ -156,9 +175,9 @@ export default function ContractListPage() {
     }
   }
 
-  function bondTag(enabled: boolean, returned: boolean) {
-    if (!enabled) {
-      return <Tag>无</Tag>;
+  function bondReturnTag(enabled: boolean, type: string | null | undefined, returned: boolean) {
+    if (!bondNeedsReturn(enabled, type)) {
+      return "-";
     }
     return returned ? <Tag color="green">已退还</Tag> : <Tag color="orange">未退还</Tag>;
   }
@@ -185,62 +204,70 @@ export default function ContractListPage() {
         ellipsis: true,
       },
       {
-        title: "合同金额（万元）",
+        title: "合同金额（元）",
         dataIndex: "contractAmount",
         width: 170,
         render: (value) => <MoneyText value={value} />,
       },
       {
-        title: "履约保证金（万元）",
+        title: "履约保证金（元）",
         dataIndex: "performanceBondAmount",
-        width: 220,
+        width: 180,
         render: (_, row) =>
           row.performanceBondEnabled ? (
-            <Space className="money-status-cell" size={8}>
-              <MoneyText value={row.performanceBondAmount} />
-              {bondTag(row.performanceBondEnabled, row.performanceBondReturned)}
-            </Space>
+            <MoneyText value={row.performanceBondAmount} />
           ) : (
             <Tag>无</Tag>
           ),
       },
       {
-        title: "履约保证金形式",
-        dataIndex: "performanceBondType",
-        width: 170,
-        render: (value) => value || "-",
+        title: "履约保证金是否退还",
+        dataIndex: "performanceBondReturned",
+        width: 180,
+        render: (_, row) =>
+          bondReturnTag(
+            row.performanceBondEnabled,
+            row.performanceBondType,
+            row.performanceBondReturned,
+          ),
       },
       {
         title: "履约保证金约定退还时间",
         dataIndex: "performanceBondReturnDueAt",
         width: 230,
-        render: (value) => value || "-",
+        render: (value, row) =>
+          bondNeedsReturn(row.performanceBondEnabled, row.performanceBondType)
+            ? value || "-"
+            : "-",
       },
       {
-        title: "质保金（万元）",
+        title: "质保金（元）",
         dataIndex: "warrantyBondAmount",
-        width: 200,
+        width: 180,
         render: (_, row) =>
           row.warrantyBondEnabled ? (
-            <Space className="money-status-cell" size={8}>
-              <MoneyText value={row.warrantyBondAmount} />
-              {bondTag(row.warrantyBondEnabled, row.warrantyBondReturned)}
-            </Space>
+            <MoneyText value={row.warrantyBondAmount} />
           ) : (
             <Tag>无</Tag>
           ),
       },
       {
-        title: "质保金形式",
-        dataIndex: "warrantyBondType",
-        width: 150,
-        render: (value) => value || "-",
+        title: "质保金是否退还",
+        dataIndex: "warrantyBondReturned",
+        width: 160,
+        render: (_, row) =>
+          bondReturnTag(
+            row.warrantyBondEnabled,
+            row.warrantyBondType,
+            row.warrantyBondReturned,
+          ),
       },
       {
         title: "质保金约定退还时间",
         dataIndex: "warrantyBondReturnDueAt",
         width: 210,
-        render: (value) => value || "-",
+        render: (value, row) =>
+          bondNeedsReturn(row.warrantyBondEnabled, row.warrantyBondType) ? value || "-" : "-",
       },
       {
         title: "合同附件",
@@ -256,13 +283,13 @@ export default function ContractListPage() {
           ),
       },
       {
-        title: "已收款金额（万元）",
+        title: "已收款金额（元）",
         dataIndex: "paidAmount",
         width: 170,
         render: (value) => <MoneyText value={value} />,
       },
       {
-        title: "未收款金额（万元）",
+        title: "未收款金额（元）",
         dataIndex: "unpaidAmount",
         width: 170,
         render: (value) => <MoneyText value={value} />,
@@ -416,6 +443,24 @@ export default function ContractListPage() {
         </Form>
       </div>
 
+      <div className="summary-grid">
+        <Statistic title="合同金额" value={summary.contractAmount} precision={2} suffix="元" />
+        <Statistic title="已收款金额" value={summary.paidAmount} precision={2} suffix="元" />
+        <Statistic title="未收款金额" value={summary.unpaidAmount} precision={2} suffix="元" />
+        <Statistic
+          title="履约保证金未退金额"
+          value={summary.performanceBondUnreturnedAmount}
+          precision={2}
+          suffix="元"
+        />
+        <Statistic
+          title="质保金未退金额"
+          value={summary.warrantyBondUnreturnedAmount}
+          precision={2}
+          suffix="元"
+        />
+      </div>
+
       <div className="table-wrap">
         <Table
           rowKey="id"
@@ -425,7 +470,7 @@ export default function ContractListPage() {
           rowClassName={(row) =>
             row.id === expandedContractId ? "contract-row-expanded" : ""
           }
-          scroll={{ x: 2450 }}
+          scroll={{ x: 2360 }}
           pagination={{
             current: query.page,
             pageSize: query.pageSize,

@@ -5,6 +5,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Select,
   Space,
   Switch,
   Table,
@@ -23,6 +24,11 @@ import {
   getContractDetail,
   updateContract,
 } from "../../services/contractApi";
+import {
+  BOND_TYPE_GUARANTEE,
+  BOND_TYPE_REMITTANCE,
+  WARRANTY_BOND_TYPE_RESERVE,
+} from "../../types/contract";
 import type {
   CommissionRecord,
   ContactRecord,
@@ -66,9 +72,13 @@ interface ContractFormValues {
   performanceBondType?: string | null;
   performanceBondReturnDueAt?: Dayjs | null;
   performanceBondReturned: boolean;
+  prepaymentEnabled: boolean;
+  prepaymentAmount?: number | null;
+  prepaymentType?: string | null;
   warrantyBondEnabled: boolean;
   warrantyBondAmount?: number | null;
   warrantyBondType?: string | null;
+  warrantyBondReservePercent?: number | null;
   warrantyBondReturnDueAt?: Dayjs | null;
   warrantyBondReturned: boolean;
 }
@@ -89,6 +99,40 @@ function ReadonlyMoney({ value }: { value?: number | null }) {
     return <Typography.Text>-</Typography.Text>;
   }
   return <MoneyText value={value} />;
+}
+
+const REFUNDABLE_BOND_OPTIONS = [
+  { label: BOND_TYPE_REMITTANCE, value: BOND_TYPE_REMITTANCE },
+  { label: BOND_TYPE_GUARANTEE, value: BOND_TYPE_GUARANTEE },
+];
+
+const WARRANTY_BOND_OPTIONS = [
+  ...REFUNDABLE_BOND_OPTIONS,
+  { label: WARRANTY_BOND_TYPE_RESERVE, value: WARRANTY_BOND_TYPE_RESERVE },
+];
+
+const WARRANTY_RESERVE_PERCENT_OPTIONS = Array.from({ length: 10 }, (_, index) => {
+  const value = index + 1;
+  return { label: `${value}%`, value };
+});
+
+function calculateReserveAmount(contractAmount?: number | null, percent?: number | null) {
+  return Number(contractAmount || 0) * Number(percent || 0) / 100;
+}
+
+function bondNeedsReturn(enabled: boolean, type?: string | null) {
+  return enabled && type !== BOND_TYPE_GUARANTEE;
+}
+
+function normalizeRefundableBondType(type?: string | null) {
+  return type === BOND_TYPE_GUARANTEE ? BOND_TYPE_GUARANTEE : BOND_TYPE_REMITTANCE;
+}
+
+function normalizeWarrantyBondType(type?: string | null) {
+  if (type === BOND_TYPE_GUARANTEE || type === WARRANTY_BOND_TYPE_RESERVE) {
+    return type;
+  }
+  return BOND_TYPE_REMITTANCE;
 }
 
 export default function ContractFormDrawer({
@@ -113,8 +157,37 @@ export default function ContractFormDrawer({
   const [commissionDrafts, setCommissionDrafts] = useState<Record<string, CommissionRow>>({});
   const editing = Boolean(contractId);
   const attachmentBizId = contractId || draftId;
+  const contractAmount = Form.useWatch("contractAmount", form);
   const performanceBondEnabled = Form.useWatch("performanceBondEnabled", form);
+  const performanceBondType = Form.useWatch("performanceBondType", form);
+  const prepaymentEnabled = Form.useWatch("prepaymentEnabled", form);
+  const prepaymentType = Form.useWatch("prepaymentType", form);
   const warrantyBondEnabled = Form.useWatch("warrantyBondEnabled", form);
+  const warrantyBondType = Form.useWatch("warrantyBondType", form);
+  const warrantyBondReservePercent = Form.useWatch("warrantyBondReservePercent", form);
+  const performanceNeedsReturn = bondNeedsReturn(
+    Boolean(performanceBondEnabled),
+    performanceBondType,
+  );
+  const warrantyNeedsReturn = bondNeedsReturn(Boolean(warrantyBondEnabled), warrantyBondType);
+  const performanceIsGuarantee =
+    Boolean(performanceBondEnabled) && performanceBondType === BOND_TYPE_GUARANTEE;
+  const performanceIsRemittance =
+    Boolean(performanceBondEnabled) && performanceBondType === BOND_TYPE_REMITTANCE;
+  const prepaymentIsGuarantee =
+    Boolean(prepaymentEnabled) && prepaymentType === BOND_TYPE_GUARANTEE;
+  const prepaymentIsRemittance =
+    Boolean(prepaymentEnabled) && prepaymentType === BOND_TYPE_REMITTANCE;
+  const warrantyIsGuarantee =
+    Boolean(warrantyBondEnabled) && warrantyBondType === BOND_TYPE_GUARANTEE;
+  const warrantyIsRemittance =
+    Boolean(warrantyBondEnabled) && warrantyBondType === BOND_TYPE_REMITTANCE;
+  const warrantyIsReserve =
+    Boolean(warrantyBondEnabled) && warrantyBondType === WARRANTY_BOND_TYPE_RESERVE;
+  const warrantyReserveAmount = calculateReserveAmount(
+    contractAmount,
+    warrantyBondReservePercent,
+  );
 
   useEffect(() => {
     if (!open) {
@@ -138,8 +211,13 @@ export default function ContractFormDrawer({
         ownerUnit: "",
         contractAmount: undefined,
         performanceBondEnabled: false,
+        performanceBondType: BOND_TYPE_REMITTANCE,
         performanceBondReturned: false,
+        prepaymentEnabled: false,
+        prepaymentType: BOND_TYPE_GUARANTEE,
         warrantyBondEnabled: false,
+        warrantyBondType: BOND_TYPE_REMITTANCE,
+        warrantyBondReservePercent: 3,
         warrantyBondReturned: false,
       });
       return;
@@ -154,12 +232,16 @@ export default function ContractFormDrawer({
           contractAmount: detail.contractAmount,
           performanceBondEnabled: detail.performanceBondEnabled,
           performanceBondAmount: detail.performanceBondAmount,
-          performanceBondType: detail.performanceBondType,
+          performanceBondType: normalizeRefundableBondType(detail.performanceBondType),
           performanceBondReturnDueAt: toDayjs(detail.performanceBondReturnDueAt),
           performanceBondReturned: detail.performanceBondReturned,
+          prepaymentEnabled: detail.prepaymentEnabled,
+          prepaymentAmount: detail.prepaymentAmount,
+          prepaymentType: normalizeRefundableBondType(detail.prepaymentType || BOND_TYPE_GUARANTEE),
           warrantyBondEnabled: detail.warrantyBondEnabled,
           warrantyBondAmount: detail.warrantyBondAmount,
-          warrantyBondType: detail.warrantyBondType,
+          warrantyBondType: normalizeWarrantyBondType(detail.warrantyBondType),
+          warrantyBondReservePercent: detail.warrantyBondReservePercent || 3,
           warrantyBondReturnDueAt: toDayjs(detail.warrantyBondReturnDueAt),
           warrantyBondReturned: detail.warrantyBondReturned,
         });
@@ -450,7 +532,7 @@ export default function ContractFormDrawer({
   const paymentColumns = useMemo<ColumnsType<PaymentRow>>(
     () => [
       {
-        title: "收款金额（万元）",
+        title: "收款金额（元）",
         dataIndex: "amount",
         width: 180,
         render: (_, row) => {
@@ -464,7 +546,7 @@ export default function ContractFormDrawer({
               min={0}
               precision={2}
               value={value.amount}
-              addonAfter="万元"
+              suffix="元"
               style={{ width: "100%" }}
               onChange={(amount) => updatePaymentDraft(row.key, { amount })}
             />
@@ -546,7 +628,7 @@ export default function ContractFormDrawer({
         },
       },
       {
-        title: "提成（万元）",
+        title: "提成（元）",
         dataIndex: "commissionAmount",
         width: 180,
         render: (_, row) => {
@@ -560,7 +642,7 @@ export default function ContractFormDrawer({
               min={0}
               precision={2}
               value={value.commissionAmount}
-              addonAfter="万元"
+              suffix="元"
               style={{ width: "100%" }}
               onChange={(commissionAmount) =>
                 updateCommissionDraft(row.key, { commissionAmount })
@@ -664,6 +746,32 @@ export default function ContractFormDrawer({
       return;
     }
 
+    const performanceType = values.performanceBondEnabled
+      ? values.performanceBondType || BOND_TYPE_REMITTANCE
+      : null;
+    const performanceReturnRequired = bondNeedsReturn(
+      Boolean(values.performanceBondEnabled),
+      performanceType,
+    );
+    const prepaymentTypeValue = values.prepaymentEnabled
+      ? values.prepaymentType || BOND_TYPE_GUARANTEE
+      : null;
+    const warrantyTypeValue = values.warrantyBondEnabled
+      ? values.warrantyBondType || BOND_TYPE_REMITTANCE
+      : null;
+    const warrantyReservePercentValue =
+      warrantyTypeValue === WARRANTY_BOND_TYPE_RESERVE
+        ? Number(values.warrantyBondReservePercent || 0)
+        : null;
+    const warrantyAmount =
+      warrantyTypeValue === WARRANTY_BOND_TYPE_RESERVE
+        ? calculateReserveAmount(values.contractAmount, warrantyReservePercentValue)
+        : Number(values.warrantyBondAmount || 0);
+    const warrantyReturnRequired = bondNeedsReturn(
+      Boolean(values.warrantyBondEnabled),
+      warrantyTypeValue,
+    );
+
     const payload: ContractPayload = {
       contract: {
         id: editing ? contractId : draftId,
@@ -675,22 +783,28 @@ export default function ContractFormDrawer({
         performanceBondAmount: values.performanceBondEnabled
           ? Number(values.performanceBondAmount || 0)
           : null,
-        performanceBondType: values.performanceBondEnabled
-          ? values.performanceBondType || null
-          : null,
-        performanceBondReturnDueAt: values.performanceBondEnabled
+        performanceBondType: performanceType,
+        performanceBondReturnDueAt: performanceReturnRequired
           ? toDateString(values.performanceBondReturnDueAt)
           : null,
-        performanceBondReturned: Boolean(values.performanceBondReturned),
-        warrantyBondEnabled: Boolean(values.warrantyBondEnabled),
-        warrantyBondAmount: values.warrantyBondEnabled
-          ? Number(values.warrantyBondAmount || 0)
+        performanceBondReturned: performanceReturnRequired
+          ? Boolean(values.performanceBondReturned)
+          : false,
+        prepaymentEnabled: Boolean(values.prepaymentEnabled),
+        prepaymentAmount: values.prepaymentEnabled
+          ? Number(values.prepaymentAmount || 0)
           : null,
-        warrantyBondType: values.warrantyBondEnabled ? values.warrantyBondType || null : null,
-        warrantyBondReturnDueAt: values.warrantyBondEnabled
+        prepaymentType: prepaymentTypeValue,
+        warrantyBondEnabled: Boolean(values.warrantyBondEnabled),
+        warrantyBondAmount: values.warrantyBondEnabled ? warrantyAmount : null,
+        warrantyBondType: warrantyTypeValue,
+        warrantyBondReservePercent: values.warrantyBondEnabled
+          ? warrantyReservePercentValue
+          : null,
+        warrantyBondReturnDueAt: warrantyReturnRequired
           ? toDateString(values.warrantyBondReturnDueAt)
           : null,
-        warrantyBondReturned: Boolean(values.warrantyBondReturned),
+        warrantyBondReturned: warrantyReturnRequired ? Boolean(values.warrantyBondReturned) : false,
       },
       contacts: normalizedContacts,
       payments: normalizedPayments,
@@ -749,11 +863,11 @@ export default function ContractFormDrawer({
               <DatePicker style={{ width: "100%" }} />
             </Form.Item>
             <Form.Item
-              label="合同金额（万元）"
+              label="合同金额（元）"
               name="contractAmount"
               rules={[{ required: true, message: "请输入合同金额" }]}
             >
-              <InputNumber min={0} precision={2} addonAfter="万元" style={{ width: "100%" }} />
+              <InputNumber min={0} precision={2} suffix="元" style={{ width: "100%" }} />
             </Form.Item>
             <Form.Item
               label="项目名称"
@@ -781,8 +895,8 @@ export default function ContractFormDrawer({
                     bizType="contract"
                     bizId={attachmentBizId}
                     category={group.category}
+                    acceptKind={group.acceptKind}
                     compact
-                    maxCount={group.maxCount}
                   />
                 </div>
               ))}
@@ -817,42 +931,156 @@ export default function ContractFormDrawer({
           </Form.Item>
           <div className="form-grid">
             <Form.Item
-              label="履约保证金（万元）"
+              label="履约保证金形式"
+              name="performanceBondType"
+              rules={[
+                {
+                  required: performanceBondEnabled,
+                  message: "请选择履约保证金形式",
+                },
+              ]}
+            >
+              <Select
+                disabled={!performanceBondEnabled}
+                options={REFUNDABLE_BOND_OPTIONS}
+              />
+            </Form.Item>
+            <Form.Item
+              label={performanceIsGuarantee ? "保函支付金额（元）" : "履约保证金金额（元）"}
               name="performanceBondAmount"
               rules={[
                 {
                   required: performanceBondEnabled,
-                  message: "请输入履约保证金",
+                  message: performanceIsGuarantee ? "请输入保函支付金额" : "请输入履约保证金金额",
                 },
               ]}
             >
               <InputNumber
                 min={0}
                 precision={2}
-                addonAfter="万元"
+                suffix="元"
                 style={{ width: "100%" }}
                 disabled={!performanceBondEnabled}
               />
             </Form.Item>
-            <Form.Item label="履约保证金形式" name="performanceBondType">
-              <Input disabled={!performanceBondEnabled} placeholder="现金、保函等" />
-            </Form.Item>
+            {performanceNeedsReturn && (
+              <>
+                <Form.Item
+                  label="履约保证金约定退还时间"
+                  name="performanceBondReturnDueAt"
+                  rules={[
+                    {
+                      required: performanceNeedsReturn,
+                      message: "请选择履约保证金约定退还时间",
+                    },
+                  ]}
+                >
+                  <DatePicker style={{ width: "100%" }} />
+                </Form.Item>
+                <Form.Item
+                  label="是否已经退还"
+                  name="performanceBondReturned"
+                  valuePropName="checked"
+                >
+                  <Switch />
+                </Form.Item>
+              </>
+            )}
+          </div>
+          {performanceIsRemittance && (
+            <div className="attachment-field">
+              <Typography.Text type="secondary">汇款凭证</Typography.Text>
+              <AttachmentList
+                bizType="contract"
+                bizId={attachmentBizId}
+                category="performance_remittance_voucher"
+                acceptKind="remittanceVoucher"
+                buttonText="添加汇款凭证"
+                compact
+              />
+            </div>
+          )}
+          {performanceIsGuarantee && (
+            <div className="attachment-field">
+              <Typography.Text type="secondary">保函凭证</Typography.Text>
+              <AttachmentList
+                bizType="contract"
+                bizId={attachmentBizId}
+                category="performance_guarantee_voucher"
+                acceptKind="pdf"
+                buttonText="添加保函凭证"
+                compact
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="form-section">
+          <div className="form-section-title">预付款</div>
+          <Form.Item label="是否有预付款" name="prepaymentEnabled" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <div className="form-grid">
             <Form.Item
-              label="履约保证金约定退还时间"
-              name="performanceBondReturnDueAt"
+              label="预付款形式"
+              name="prepaymentType"
               rules={[
                 {
-                  required: performanceBondEnabled,
-                  message: "请选择履约保证金约定退还时间",
+                  required: prepaymentEnabled,
+                  message: "请选择预付款形式",
                 },
               ]}
             >
-              <DatePicker style={{ width: "100%" }} disabled={!performanceBondEnabled} />
+              <Select
+                disabled={!prepaymentEnabled}
+                options={REFUNDABLE_BOND_OPTIONS}
+              />
             </Form.Item>
-            <Form.Item label="是否已经退还" name="performanceBondReturned" valuePropName="checked">
-              <Switch disabled={!performanceBondEnabled} />
+            <Form.Item
+              label={prepaymentIsGuarantee ? "保函支付金额（元）" : "预付款金额（元）"}
+              name="prepaymentAmount"
+              rules={[
+                {
+                  required: prepaymentEnabled,
+                  message: prepaymentIsGuarantee ? "请输入保函支付金额" : "请输入预付款金额",
+                },
+              ]}
+            >
+              <InputNumber
+                min={0}
+                precision={2}
+                suffix="元"
+                style={{ width: "100%" }}
+                disabled={!prepaymentEnabled}
+              />
             </Form.Item>
           </div>
+          {prepaymentIsRemittance && (
+            <div className="attachment-field">
+              <Typography.Text type="secondary">汇款凭证</Typography.Text>
+              <AttachmentList
+                bizType="contract"
+                bizId={attachmentBizId}
+                category="prepayment_remittance_voucher"
+                acceptKind="remittanceVoucher"
+                buttonText="添加汇款凭证"
+                compact
+              />
+            </div>
+          )}
+          {prepaymentIsGuarantee && (
+            <div className="attachment-field">
+              <Typography.Text type="secondary">保函凭证</Typography.Text>
+              <AttachmentList
+                bizType="contract"
+                bizId={attachmentBizId}
+                category="prepayment_guarantee_voucher"
+                acceptKind="pdf"
+                buttonText="添加保函凭证"
+                compact
+              />
+            </div>
+          )}
         </div>
 
         <div className="form-section">
@@ -862,42 +1090,111 @@ export default function ContractFormDrawer({
           </Form.Item>
           <div className="form-grid">
             <Form.Item
-              label="质保金（万元）"
-              name="warrantyBondAmount"
+              label="质保金形式"
+              name="warrantyBondType"
               rules={[
                 {
                   required: warrantyBondEnabled,
-                  message: "请输入质保金",
+                  message: "请选择质保金形式",
                 },
               ]}
             >
-              <InputNumber
-                min={0}
-                precision={2}
-                addonAfter="万元"
-                style={{ width: "100%" }}
+              <Select
                 disabled={!warrantyBondEnabled}
+                options={WARRANTY_BOND_OPTIONS}
               />
             </Form.Item>
-            <Form.Item label="质保金形式" name="warrantyBondType">
-              <Input disabled={!warrantyBondEnabled} placeholder="现金、扣款等" />
-            </Form.Item>
-            <Form.Item
-              label="质保金约定退还时间"
-              name="warrantyBondReturnDueAt"
-              rules={[
-                {
-                  required: warrantyBondEnabled,
-                  message: "请选择质保金约定退还时间",
-                },
-              ]}
-            >
-              <DatePicker style={{ width: "100%" }} disabled={!warrantyBondEnabled} />
-            </Form.Item>
-            <Form.Item label="是否已经退还" name="warrantyBondReturned" valuePropName="checked">
-              <Switch disabled={!warrantyBondEnabled} />
-            </Form.Item>
+            {warrantyIsReserve && (
+              <Form.Item
+                label="预留比例"
+                name="warrantyBondReservePercent"
+                rules={[
+                  {
+                    required: warrantyIsReserve,
+                    message: "请选择预留比例",
+                  },
+                ]}
+              >
+                <Select options={WARRANTY_RESERVE_PERCENT_OPTIONS} />
+              </Form.Item>
+            )}
+            {warrantyIsReserve ? (
+              <Form.Item label="预留金额（元）">
+                <InputNumber
+                  min={0}
+                  precision={2}
+                  suffix="元"
+                  style={{ width: "100%" }}
+                  value={warrantyReserveAmount}
+                  disabled
+                />
+              </Form.Item>
+            ) : (
+              <Form.Item
+                label={warrantyIsGuarantee ? "保函支付金额（元）" : "质保金金额（元）"}
+                name="warrantyBondAmount"
+                rules={[
+                  {
+                    required: warrantyBondEnabled,
+                    message: warrantyIsGuarantee ? "请输入保函支付金额" : "请输入质保金金额",
+                  },
+                ]}
+              >
+                <InputNumber
+                  min={0}
+                  precision={2}
+                  suffix="元"
+                  style={{ width: "100%" }}
+                  disabled={!warrantyBondEnabled}
+                />
+              </Form.Item>
+            )}
+            {warrantyNeedsReturn && (
+              <>
+                <Form.Item
+                  label="质保金约定退还时间"
+                  name="warrantyBondReturnDueAt"
+                  rules={[
+                    {
+                      required: warrantyNeedsReturn,
+                      message: "请选择质保金约定退还时间",
+                    },
+                  ]}
+                >
+                  <DatePicker style={{ width: "100%" }} />
+                </Form.Item>
+                <Form.Item label="是否已经退还" name="warrantyBondReturned" valuePropName="checked">
+                  <Switch />
+                </Form.Item>
+              </>
+            )}
           </div>
+          {warrantyIsRemittance && (
+            <div className="attachment-field">
+              <Typography.Text type="secondary">汇款凭证</Typography.Text>
+              <AttachmentList
+                bizType="contract"
+                bizId={attachmentBizId}
+                category="warranty_remittance_voucher"
+                acceptKind="remittanceVoucher"
+                buttonText="添加汇款凭证"
+                compact
+              />
+            </div>
+          )}
+          {warrantyIsGuarantee && (
+            <div className="attachment-field">
+              <Typography.Text type="secondary">保函凭证</Typography.Text>
+              <AttachmentList
+                bizType="contract"
+                bizId={attachmentBizId}
+                category="warranty_guarantee_voucher"
+                acceptKind="pdf"
+                buttonText="添加保函凭证"
+                compact
+              />
+            </div>
+          )}
         </div>
 
         <div className="form-section">

@@ -2,6 +2,7 @@ import { App, Button, List, Popconfirm, Space, Tag, Typography } from "antd";
 import { FileText, FolderOpen, Trash2, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
+  AttachmentAcceptKind,
   AttachmentBizType,
   AttachmentCategory,
   AttachmentRecord,
@@ -20,6 +21,8 @@ interface AttachmentListProps {
   bizType: AttachmentBizType;
   bizId: string;
   category: AttachmentCategory;
+  acceptKind?: AttachmentAcceptKind;
+  buttonText?: string;
   maxCount?: number;
   readonly?: boolean;
   compact?: boolean;
@@ -30,6 +33,8 @@ export default function AttachmentList({
   bizType,
   bizId,
   category,
+  acceptKind = "documents",
+  buttonText,
   maxCount,
   readonly,
   compact,
@@ -59,10 +64,10 @@ export default function AttachmentList({
     try {
       const remainingCount = maxCount === undefined ? undefined : maxCount - items.length;
       if (remainingCount !== undefined && remainingCount <= 0) {
-        message.warning("该附件类型只能上传 1 份，请先删除后再上传");
+        message.warning("该附件类型已达到上传数量限制，请先删除后再上传");
         return;
       }
-      const paths = await pickSourcePaths();
+      const paths = await pickSourcePaths(acceptKind);
       if (paths.length === 0) {
         if (!isTauriRuntime()) {
           message.info("浏览器预览模式不能读取本地文件路径，请在 Tauri 桌面应用中添加附件");
@@ -70,7 +75,7 @@ export default function AttachmentList({
         return;
       }
       if (remainingCount !== undefined && paths.length > remainingCount) {
-        message.warning("该附件类型只能上传 1 份，请先删除后再上传");
+        message.warning("该附件类型已达到上传数量限制，请先删除后再上传");
         return;
       }
       setLoading(true);
@@ -118,7 +123,7 @@ export default function AttachmentList({
           onClick={handleAdd}
           size={compact ? "small" : "middle"}
         >
-          添加 PDF 附件
+          {buttonText || "添加附件"}
         </Button>
       )}
       <List

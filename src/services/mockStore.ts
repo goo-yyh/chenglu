@@ -3,6 +3,7 @@ import type {
   AttachmentCategory,
   AttachmentRecord,
 } from "../types/attachment";
+import { BOND_TYPE_GUARANTEE } from "../types/contract";
 import type {
   CommissionRecord,
   ContactRecord,
@@ -11,6 +12,7 @@ import type {
   ContractListItem,
   ContractListQuery,
   ContractListResult,
+  ContractListSummary,
   ContractPayload,
   PaymentRecord,
 } from "../types/contract";
@@ -85,10 +87,26 @@ function sum(payments: PaymentRecord[]) {
   return payments.reduce((total, item) => total + Number(item.amount || 0), 0);
 }
 
+function bondRequiresReturn(enabled: boolean, type?: string | null) {
+  return enabled && type !== BOND_TYPE_GUARANTEE;
+}
+
 function attachmentSummary(attachments: AttachmentRecord[]) {
   return {
     count: attachments.length,
     names: attachments.map((item) => item.originalFileName),
+  };
+}
+
+function normalizeStoredContract(contract: StoredContract): StoredContract {
+  return {
+    ...contract,
+    performanceBondEnabled: Boolean(contract.performanceBondEnabled),
+    performanceBondReturned: Boolean(contract.performanceBondReturned),
+    prepaymentEnabled: Boolean(contract.prepaymentEnabled),
+    prepaymentType: contract.prepaymentType || BOND_TYPE_GUARANTEE,
+    warrantyBondEnabled: Boolean(contract.warrantyBondEnabled),
+    warrantyBondReturned: Boolean(contract.warrantyBondReturned),
   };
 }
 
@@ -104,17 +122,49 @@ function isValidAttachmentCategory(
   category: AttachmentCategory,
 ) {
   if (bizType === "contract") {
-    return ["contract_file", "award_notice", "acceptance_report", "invoice"].includes(category);
+    return [
+      "contract_file",
+      "award_notice",
+      "tender_file",
+      "bid_file",
+      "acceptance_report",
+      "invoice",
+      "performance_remittance_voucher",
+      "performance_guarantee_voucher",
+      "prepayment_remittance_voucher",
+      "prepayment_guarantee_voucher",
+      "warranty_remittance_voucher",
+      "warranty_guarantee_voucher",
+    ].includes(category);
   }
   return category === "supplement_file";
 }
 
+function allowedAttachmentExtensions(category: AttachmentCategory) {
+  if (
+    category === "performance_remittance_voucher" ||
+    category === "prepayment_remittance_voucher" ||
+    category === "warranty_remittance_voucher"
+  ) {
+    return ["jpg", "jpeg", "png", "pdf"];
+  }
+  if (
+    category === "performance_guarantee_voucher" ||
+    category === "prepayment_guarantee_voucher" ||
+    category === "warranty_guarantee_voucher"
+  ) {
+    return ["pdf"];
+  }
+  return ["doc", "docx", "xls", "xlsx", "pdf"];
+}
+
 function contractListItem(contract: StoredContract, store: StoreShape): ContractListItem {
+  const normalized = normalizeStoredContract(contract);
   const paidAmount = sum(contract.payments);
   return {
-    ...contract,
+    ...normalized,
     paidAmount,
-    unpaidAmount: contract.contractAmount - paidAmount,
+    unpaidAmount: normalized.contractAmount - paidAmount,
     supplementCount: store.supplements.filter((item) => item.contractId === contract.id).length,
     attachmentSummary: attachmentSummary(
       store.attachments.filter(
@@ -122,6 +172,53 @@ function contractListItem(contract: StoredContract, store: StoreShape): Contract
       ),
     ),
   };
+}
+
+function supplementAmountTotal(store: StoreShape, contractId: string) {
+  return store.supplements
+    .filter((item) => item.contractId === contractId)
+    .reduce((total, item) => total + Number(item.supplementAmount || 0), 0);
+}
+
+function supplementPaidTotal(store: StoreShape, contractId: string) {
+  return store.supplements
+    .filter((item) => item.contractId === contractId)
+    .reduce((total, item) => total + sum(item.payments), 0);
+}
+
+function buildSummary(
+  rows: Array<{ contract: StoredContract; item: ContractListItem }>,
+  store: StoreShape,
+): ContractListSummary {
+  return rows.reduce(
+    (summary, { item }) => {
+      const contractAmount = item.contractAmount + supplementAmountTotal(store, item.id);
+      const paidAmount = item.paidAmount + supplementPaidTotal(store, item.id);
+      summary.contractAmount += contractAmount;
+      summary.paidAmount += paidAmount;
+      summary.unpaidAmount += contractAmount - paidAmount;
+      if (
+        bondRequiresReturn(item.performanceBondEnabled, item.performanceBondType) &&
+        !item.performanceBondReturned
+      ) {
+        summary.performanceBondUnreturnedAmount += Number(item.performanceBondAmount || 0);
+      }
+      if (
+        bondRequiresReturn(item.warrantyBondEnabled, item.warrantyBondType) &&
+        !item.warrantyBondReturned
+      ) {
+        summary.warrantyBondUnreturnedAmount += Number(item.warrantyBondAmount || 0);
+      }
+      return summary;
+    },
+    {
+      contractAmount: 0,
+      paidAmount: 0,
+      unpaidAmount: 0,
+      performanceBondUnreturnedAmount: 0,
+      warrantyBondUnreturnedAmount: 0,
+    },
+  );
 }
 
 function supplementListItem(
@@ -186,14 +283,15 @@ function matchesContractQuery(
   }
   if (
     query.performanceBondReturned !== undefined &&
-    (!item.performanceBondEnabled ||
+    (!bondRequiresReturn(item.performanceBondEnabled, item.performanceBondType) ||
       item.performanceBondReturned !== query.performanceBondReturned)
   ) {
     return false;
   }
   if (
     query.warrantyBondReturned !== undefined &&
-    (!item.warrantyBondEnabled || item.warrantyBondReturned !== query.warrantyBondReturned)
+    (!bondRequiresReturn(item.warrantyBondEnabled, item.warrantyBondType) ||
+      item.warrantyBondReturned !== query.warrantyBondReturned)
   ) {
     return false;
   }
@@ -210,15 +308,16 @@ export function mockListContracts(query: ContractListQuery): ContractListResult 
   const store = readStore();
   const page = Math.max(1, Number(query.page || 1));
   const pageSize = Math.max(1, Number(query.pageSize || 12));
-  const items = store.contracts
-    .map((contract) => ({ contract, item: contractListItem(contract, store) }))
-    .filter(({ contract, item }) => matchesContractQuery(contract, item, query))
-    .map(({ item }) => item);
+  const matched = store.contracts
+    .map((contract) => ({ contract: normalizeStoredContract(contract), item: contractListItem(contract, store) }))
+    .filter(({ contract, item }) => matchesContractQuery(contract, item, query));
+  const items = matched.map(({ item }) => item);
   return {
     items: items.slice((page - 1) * pageSize, page * pageSize),
     total: items.length,
     page,
     pageSize,
+    summary: buildSummary(matched, store),
   };
 }
 
@@ -391,20 +490,10 @@ export function mockAddAttachment(
   if (!isValidAttachmentCategory(bizType, category)) {
     throw new Error("不支持的附件类型");
   }
-  if (
-    category !== "invoice" &&
-    store.attachments.some(
-      (item) =>
-        item.bizType === bizType &&
-        item.bizId === bizId &&
-        normalizeAttachmentCategory(item) === category,
-    )
-  ) {
-    throw new Error("该附件类型只能上传 1 份，请先删除后再上传");
-  }
   const name = sourcePath.split(/[\\/]/).pop() || "附件";
-  if (!name.toLowerCase().endsWith(".pdf")) {
-    throw new Error("合同附件仅支持 PDF 格式");
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  if (!allowedAttachmentExtensions(category).includes(ext)) {
+    throw new Error("附件格式不符合当前附件类型要求");
   }
   const createdAt = now();
   const record: AttachmentRecord = {
@@ -415,7 +504,7 @@ export function mockAddAttachment(
     originalFileName: name,
     storedFileName: name,
     relativePath: `attachments/mock/${name}`,
-    mimeType: "application/pdf",
+    mimeType: ext === "pdf" ? "application/pdf" : null,
     createdAt,
   };
   store.attachments.push(record);

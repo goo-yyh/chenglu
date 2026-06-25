@@ -1,6 +1,13 @@
 import type { AttachmentRecord, AttachmentSummary } from "./attachment";
 import type { SupplementListItem } from "./supplement";
 
+export const BOND_TYPE_REMITTANCE = "汇款";
+export const BOND_TYPE_GUARANTEE = "保函";
+export const WARRANTY_BOND_TYPE_RESERVE = "合同内金额预留";
+
+export type RefundableBondType = typeof BOND_TYPE_REMITTANCE | typeof BOND_TYPE_GUARANTEE;
+export type WarrantyBondType = RefundableBondType | typeof WARRANTY_BOND_TYPE_RESERVE;
+
 export interface ContactRecord {
   id?: string | null;
   name?: string | null;
@@ -32,9 +39,13 @@ export interface ContractInput {
   performanceBondType?: string | null;
   performanceBondReturnDueAt?: string | null;
   performanceBondReturned: boolean;
+  prepaymentEnabled: boolean;
+  prepaymentAmount?: number | null;
+  prepaymentType?: string | null;
   warrantyBondEnabled: boolean;
   warrantyBondAmount?: number | null;
   warrantyBondType?: string | null;
+  warrantyBondReservePercent?: number | null;
   warrantyBondReturnDueAt?: string | null;
   warrantyBondReturned: boolean;
 }
@@ -74,6 +85,15 @@ export interface ContractListResult {
   total: number;
   page: number;
   pageSize: number;
+  summary: ContractListSummary;
+}
+
+export interface ContractListSummary {
+  contractAmount: number;
+  paidAmount: number;
+  unpaidAmount: number;
+  performanceBondUnreturnedAmount: number;
+  warrantyBondUnreturnedAmount: number;
 }
 
 export interface ContractDetail extends ContractListItem {

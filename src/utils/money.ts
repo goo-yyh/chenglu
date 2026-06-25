@@ -4,7 +4,7 @@ export function formatMoney(value?: number | null) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  return `${formattedAmount} 万`;
+  return `${formattedAmount} 元`;
 }
 
 export function toAmount(value: unknown) {
