@@ -444,19 +444,19 @@ export default function ContractListPage() {
       </div>
 
       <div className="summary-grid">
-        <Statistic title="合同金额" value={summary.contractAmount} precision={2} suffix="元" />
-        <Statistic title="已收款金额" value={summary.paidAmount} precision={2} suffix="元" />
-        <Statistic title="未收款金额" value={summary.unpaidAmount} precision={2} suffix="元" />
+        <Statistic title="合同金额" value={summary.contractAmount} precision={0} suffix="元" />
+        <Statistic title="已收款金额" value={summary.paidAmount} precision={0} suffix="元" />
+        <Statistic title="未收款金额" value={summary.unpaidAmount} precision={0} suffix="元" />
         <Statistic
           title="履约保证金未退金额"
           value={summary.performanceBondUnreturnedAmount}
-          precision={2}
+          precision={0}
           suffix="元"
         />
         <Statistic
           title="质保金未退金额"
           value={summary.warrantyBondUnreturnedAmount}
-          precision={2}
+          precision={0}
           suffix="元"
         />
       </div>

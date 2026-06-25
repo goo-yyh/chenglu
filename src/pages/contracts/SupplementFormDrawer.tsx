@@ -187,7 +187,7 @@ export default function SupplementFormDrawer({
           return (
             <InputNumber
               min={0}
-              precision={2}
+              precision={0}
               value={value.amount}
               suffix="元"
               style={{ width: "100%" }}
@@ -269,6 +269,15 @@ export default function SupplementFormDrawer({
       message.error("增补合同收款记录需要同时填写金额和收款日期");
       return;
     }
+    const supplementAmount = Number(values.supplementAmount || 0);
+    const totalPaymentAmount = normalizedPayments.reduce(
+      (total, row) => total + row.amount,
+      0,
+    );
+    if (totalPaymentAmount > supplementAmount) {
+      message.error("增补合同收款金额不能超过增加合同金额");
+      return;
+    }
     if (!contractId && !editing) {
       message.error("缺少主合同 ID");
       return;
@@ -279,7 +288,7 @@ export default function SupplementFormDrawer({
       const payload = {
         supplement: {
           id: editing ? supplementId : draftId,
-          supplementAmount: Number(values.supplementAmount || 0),
+          supplementAmount,
           supplementDate: toDateString(values.supplementDate),
         },
         payments: normalizedPayments,
@@ -330,7 +339,7 @@ export default function SupplementFormDrawer({
             name="supplementAmount"
             rules={[{ required: true, message: "请输入增加合同金额" }]}
           >
-            <InputNumber min={0} precision={2} suffix="元" style={{ width: "100%" }} />
+            <InputNumber min={0} precision={0} suffix="元" style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item
             label="增补合同日期"

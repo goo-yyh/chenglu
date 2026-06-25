@@ -544,7 +544,7 @@ export default function ContractFormDrawer({
           return (
             <InputNumber
               min={0}
-              precision={2}
+              precision={0}
               value={value.amount}
               suffix="元"
               style={{ width: "100%" }}
@@ -640,7 +640,7 @@ export default function ContractFormDrawer({
           return (
             <InputNumber
               min={0}
-              precision={2}
+              precision={0}
               value={value.commissionAmount}
               suffix="元"
               style={{ width: "100%" }}
@@ -737,6 +737,15 @@ export default function ContractFormDrawer({
       message.error("合同收款记录需要同时填写金额和收款日期");
       return;
     }
+    const contractAmountValue = Number(values.contractAmount || 0);
+    const totalPaymentAmount = normalizedPayments.reduce(
+      (total, row) => total + row.amount,
+      0,
+    );
+    if (totalPaymentAmount > contractAmountValue) {
+      message.error("合同收款金额不能超过合同金额");
+      return;
+    }
     if (normalizedContacts.some((row) => !row.name || !row.phone || !row.position)) {
       message.error("经办人记录需要同时填写姓名、电话和职位");
       return;
@@ -778,7 +787,7 @@ export default function ContractFormDrawer({
         contractDate: toDateString(values.contractDate),
         projectName: values.projectName,
         ownerUnit: values.ownerUnit,
-        contractAmount: Number(values.contractAmount || 0),
+        contractAmount: contractAmountValue,
         performanceBondEnabled: Boolean(values.performanceBondEnabled),
         performanceBondAmount: values.performanceBondEnabled
           ? Number(values.performanceBondAmount || 0)
@@ -867,7 +876,7 @@ export default function ContractFormDrawer({
               name="contractAmount"
               rules={[{ required: true, message: "请输入合同金额" }]}
             >
-              <InputNumber min={0} precision={2} suffix="元" style={{ width: "100%" }} />
+              <InputNumber min={0} precision={0} suffix="元" style={{ width: "100%" }} />
             </Form.Item>
             <Form.Item
               label="项目名称"
@@ -957,7 +966,7 @@ export default function ContractFormDrawer({
             >
               <InputNumber
                 min={0}
-                precision={2}
+                precision={0}
                 suffix="元"
                 style={{ width: "100%" }}
                 disabled={!performanceBondEnabled}
@@ -1048,7 +1057,7 @@ export default function ContractFormDrawer({
             >
               <InputNumber
                 min={0}
-                precision={2}
+                precision={0}
                 suffix="元"
                 style={{ width: "100%" }}
                 disabled={!prepaymentEnabled}
@@ -1122,7 +1131,7 @@ export default function ContractFormDrawer({
               <Form.Item label="预留金额（元）">
                 <InputNumber
                   min={0}
-                  precision={2}
+                  precision={0}
                   suffix="元"
                   style={{ width: "100%" }}
                   value={warrantyReserveAmount}
@@ -1142,7 +1151,7 @@ export default function ContractFormDrawer({
               >
                 <InputNumber
                   min={0}
-                  precision={2}
+                  precision={0}
                   suffix="元"
                   style={{ width: "100%" }}
                   disabled={!warrantyBondEnabled}

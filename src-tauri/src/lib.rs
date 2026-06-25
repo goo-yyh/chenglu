@@ -424,11 +424,7 @@ fn create_contract(
     input: ContractPayload,
 ) -> Result<ContractDetail, String> {
     validate_contract_payload(&input)?;
-    let id = input
-        .contract
-        .id
-        .clone()
-        .unwrap_or_else(new_id);
+    let id = input.contract.id.clone().unwrap_or_else(new_id);
     with_conn_mut(&state, |conn| {
         let tx = conn.transaction()?;
         insert_contract(&tx, &id, &input.contract)?;
@@ -448,6 +444,7 @@ fn update_contract(
     with_conn_mut(&state, |conn| {
         let now = now_string();
         let tx = conn.transaction()?;
+        soft_delete_contract_children(&tx, &id)?;
         tx.execute(
             "UPDATE contracts
              SET contract_date = ?1, project_name = ?2, owner_unit = ?3, contract_amount = ?4,
@@ -483,7 +480,6 @@ fn update_contract(
                 id
             ],
         )?;
-        soft_delete_contract_children(&tx, &id)?;
         replace_contract_children(&tx, &id, &input)?;
         tx.commit()?;
         contract_detail(conn, &id)
@@ -544,11 +540,7 @@ fn create_contract_supplement(
     input: SupplementPayload,
 ) -> Result<SupplementDetail, String> {
     validate_supplement_payload(&input)?;
-    let id = input
-        .supplement
-        .id
-        .clone()
-        .unwrap_or_else(new_id);
+    let id = input.supplement.id.clone().unwrap_or_else(new_id);
     with_conn_mut(&state, |conn| {
         let tx = conn.transaction()?;
         insert_supplement(&tx, &id, &contract_id, &input.supplement)?;
@@ -568,6 +560,7 @@ fn update_contract_supplement(
     with_conn_mut(&state, |conn| {
         let now = now_string();
         let tx = conn.transaction()?;
+        soft_delete_supplement_children(&tx, &id)?;
         tx.execute(
             "UPDATE contract_supplements
              SET supplement_amount = ?1, supplement_date = ?2, updated_at = ?3
@@ -579,7 +572,6 @@ fn update_contract_supplement(
                 id
             ],
         )?;
-        soft_delete_supplement_children(&tx, &id)?;
         replace_supplement_payments(&tx, &id, &input.payments)?;
         tx.commit()?;
         supplement_detail(conn, &id)
@@ -744,7 +736,10 @@ fn delete_attachment(state: tauri::State<AppState>, attachment_id: String) -> Re
             let trash_name = format!(
                 "{}_{}",
                 Local::now().format("%Y%m%d%H%M%S"),
-                source.file_name().and_then(|v| v.to_str()).unwrap_or("attachment")
+                source
+                    .file_name()
+                    .and_then(|v| v.to_str())
+                    .unwrap_or("attachment")
             );
             let target = state.paths.attachments_dir.join("trash").join(trash_name);
             if let Some(parent) = target.parent() {
@@ -932,6 +927,11 @@ fn run_migrations(conn: &mut Connection) -> Result<(), String> {
             "008_amount_units_to_yuan",
             include_str!("../migrations/008_amount_units_to_yuan.sql"),
         ),
+        (
+            9,
+            "009_payment_amount_limits",
+            include_str!("../migrations/009_payment_amount_limits.sql"),
+        ),
     ];
 
     conn.execute_batch(migrations[0].2).map_err(to_string)?;
@@ -958,7 +958,11 @@ fn run_migrations(conn: &mut Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn insert_contract(tx: &Transaction<'_>, id: &str, contract: &ContractInput) -> rusqlite::Result<()> {
+fn insert_contract(
+    tx: &Transaction<'_>,
+    id: &str,
+    contract: &ContractInput,
+) -> rusqlite::Result<()> {
     let now = now_string();
     tx.execute(
         "INSERT INTO contracts
@@ -1183,7 +1187,10 @@ fn supplement_detail(conn: &Connection, id: &str) -> rusqlite::Result<Supplement
     })
 }
 
-fn supplement_list(conn: &Connection, contract_id: &str) -> rusqlite::Result<Vec<SupplementListItem>> {
+fn supplement_list(
+    conn: &Connection,
+    contract_id: &str,
+) -> rusqlite::Result<Vec<SupplementListItem>> {
     let mut stmt = conn.prepare(
         "SELECT id, contract_id, supplement_amount, supplement_date, created_at, updated_at
          FROM contract_supplements
@@ -1191,7 +1198,9 @@ fn supplement_list(conn: &Connection, contract_id: &str) -> rusqlite::Result<Vec
          ORDER BY supplement_date DESC, created_at DESC",
     )?;
     let rows = stmt
-        .query_map(params![contract_id], |row| supplement_list_item_from_row(conn, row))?
+        .query_map(params![contract_id], |row| {
+            supplement_list_item_from_row(conn, row)
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -1242,7 +1251,7 @@ fn supplement_list_item_from_row(
         supplement_amount: amount,
         supplement_date: row.get(3)?,
         paid_amount,
-        unpaid_amount: amount - paid_amount,
+        unpaid_amount: unpaid_amount(amount, paid_amount),
         attachment_summary: attachment_summary_for(conn, "contract_supplement", &id)?,
         created_at: row.get(4)?,
         updated_at: row.get(5)?,
@@ -1255,7 +1264,7 @@ fn enrich_contract_list_item(
 ) -> rusqlite::Result<()> {
     let paid = sum_contract_payments(conn, &item.id)?;
     item.paid_amount = paid;
-    item.unpaid_amount = item.contract_amount - paid;
+    item.unpaid_amount = unpaid_amount(item.contract_amount, paid);
     item.supplement_count = count_contract_supplements(conn, &item.id)?;
     item.attachment_summary = attachment_summary_for(conn, "contract", &item.id)?;
     Ok(())
@@ -1280,14 +1289,19 @@ fn summarize_contracts(
         let total_paid_amount = item.paid_amount + supplement_paid;
         summary.contract_amount += total_contract_amount;
         summary.paid_amount += total_paid_amount;
-        summary.unpaid_amount += total_contract_amount - total_paid_amount;
-        if bond_requires_return(item.performance_bond_enabled, item.performance_bond_type.as_deref())
-            && !item.performance_bond_returned
+        summary.unpaid_amount += unpaid_amount(total_contract_amount, total_paid_amount);
+        if bond_requires_return(
+            item.performance_bond_enabled,
+            item.performance_bond_type.as_deref(),
+        ) && !item.performance_bond_returned
         {
-            summary.performance_bond_unreturned_amount += item.performance_bond_amount.unwrap_or(0.0);
+            summary.performance_bond_unreturned_amount +=
+                item.performance_bond_amount.unwrap_or(0.0);
         }
-        if bond_requires_return(item.warranty_bond_enabled, item.warranty_bond_type.as_deref())
-            && !item.warranty_bond_returned
+        if bond_requires_return(
+            item.warranty_bond_enabled,
+            item.warranty_bond_type.as_deref(),
+        ) && !item.warranty_bond_returned
         {
             summary.warranty_bond_unreturned_amount += item.warranty_bond_amount.unwrap_or(0.0);
         }
@@ -1312,6 +1326,10 @@ fn contains_query_text(value: &str, keyword: &Option<String>) -> bool {
 
 fn bond_requires_return(enabled: bool, bond_type: Option<&str>) -> bool {
     enabled && bond_type != Some(BOND_TYPE_GUARANTEE)
+}
+
+fn unpaid_amount(amount: f64, paid_amount: f64) -> f64 {
+    (amount - paid_amount).max(0.0)
 }
 
 fn matches_contract_list_query(
@@ -1345,15 +1363,19 @@ fn matches_contract_list_query(
         }
     }
     if let Some(returned) = query.performance_bond_returned {
-        if !bond_requires_return(item.performance_bond_enabled, item.performance_bond_type.as_deref())
-            || item.performance_bond_returned != returned
+        if !bond_requires_return(
+            item.performance_bond_enabled,
+            item.performance_bond_type.as_deref(),
+        ) || item.performance_bond_returned != returned
         {
             return Ok(false);
         }
     }
     if let Some(returned) = query.warranty_bond_returned {
-        if !bond_requires_return(item.warranty_bond_enabled, item.warranty_bond_type.as_deref())
-            || item.warranty_bond_returned != returned
+        if !bond_requires_return(
+            item.warranty_bond_enabled,
+            item.warranty_bond_type.as_deref(),
+        ) || item.warranty_bond_returned != returned
         {
             return Ok(false);
         }
@@ -1376,13 +1398,13 @@ fn load_contacts(conn: &Connection, contract_id: &str) -> rusqlite::Result<Vec<C
     )?;
     let rows = stmt
         .query_map(params![contract_id], |row| {
-        Ok(ContactRecord {
-            id: Some(row.get(0)?),
-            name: row.get(1)?,
-            phone: row.get(2)?,
-            position: row.get(3)?,
-        })
-    })?
+            Ok(ContactRecord {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                phone: row.get(2)?,
+                position: row.get(3)?,
+            })
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -1399,12 +1421,12 @@ fn load_contract_payments(
     )?;
     let rows = stmt
         .query_map(params![contract_id], |row| {
-        Ok(PaymentRecord {
-            id: Some(row.get(0)?),
-            amount: row.get(1)?,
-            paid_at: row.get(2)?,
-        })
-    })?
+            Ok(PaymentRecord {
+                id: Some(row.get(0)?),
+                amount: row.get(1)?,
+                paid_at: row.get(2)?,
+            })
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -1421,12 +1443,12 @@ fn load_supplement_payments(
     )?;
     let rows = stmt
         .query_map(params![supplement_id], |row| {
-        Ok(PaymentRecord {
-            id: Some(row.get(0)?),
-            amount: row.get(1)?,
-            paid_at: row.get(2)?,
-        })
-    })?
+            Ok(PaymentRecord {
+                id: Some(row.get(0)?),
+                amount: row.get(1)?,
+                paid_at: row.get(2)?,
+            })
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -1443,13 +1465,13 @@ fn load_commissions(
     )?;
     let rows = stmt
         .query_map(params![contract_id], |row| {
-        Ok(CommissionRecord {
-            id: Some(row.get(0)?),
-            salesperson: row.get(1)?,
-            commission_amount: row.get(2)?,
-            commission_paid_at: row.get(3)?,
-        })
-    })?
+            Ok(CommissionRecord {
+                id: Some(row.get(0)?),
+                salesperson: row.get(1)?,
+                commission_amount: row.get(2)?,
+                commission_paid_at: row.get(3)?,
+            })
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -1580,10 +1602,7 @@ fn count_contract_supplements(conn: &Connection, contract_id: &str) -> rusqlite:
     )
 }
 
-fn sum_contract_supplement_amounts(
-    conn: &Connection,
-    contract_id: &str,
-) -> rusqlite::Result<f64> {
+fn sum_contract_supplement_amounts(conn: &Connection, contract_id: &str) -> rusqlite::Result<f64> {
     conn.query_row(
         "SELECT COALESCE(SUM(supplement_amount), 0)
          FROM contract_supplements
@@ -1593,10 +1612,7 @@ fn sum_contract_supplement_amounts(
     )
 }
 
-fn sum_contract_supplement_payments(
-    conn: &Connection,
-    contract_id: &str,
-) -> rusqlite::Result<f64> {
+fn sum_contract_supplement_payments(conn: &Connection, contract_id: &str) -> rusqlite::Result<f64> {
     conn.query_row(
         "SELECT COALESCE(SUM(sp.amount), 0)
          FROM supplement_payments sp
@@ -1690,6 +1706,14 @@ fn validate_contract_payload(input: &ContractPayload) -> Result<(), String> {
             return Err("收款日期不能为空".to_string());
         }
     }
+    let total_payment_amount = input
+        .payments
+        .iter()
+        .map(|payment| payment.amount)
+        .sum::<f64>();
+    if total_payment_amount > input.contract.contract_amount + 0.000001 {
+        return Err("合同收款金额不能超过合同金额".to_string());
+    }
     for commission in &input.commissions {
         if commission.salesperson.trim().is_empty() {
             return Err("业务员不能为空".to_string());
@@ -1715,6 +1739,14 @@ fn validate_supplement_payload(input: &SupplementPayload) -> Result<(), String> 
         if payment.paid_at.trim().is_empty() {
             return Err("增补合同收款日期不能为空".to_string());
         }
+    }
+    let total_payment_amount = input
+        .payments
+        .iter()
+        .map(|payment| payment.amount)
+        .sum::<f64>();
+    if total_payment_amount > input.supplement.supplement_amount + 0.000001 {
+        return Err("增补合同收款金额不能超过增加合同金额".to_string());
     }
     Ok(())
 }

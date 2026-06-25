@@ -91,6 +91,20 @@ function bondRequiresReturn(enabled: boolean, type?: string | null) {
   return enabled && type !== BOND_TYPE_GUARANTEE;
 }
 
+function unpaidAmount(amount: number, paidAmount: number) {
+  return Math.max(Number(amount || 0) - Number(paidAmount || 0), 0);
+}
+
+function assertPaymentTotalWithinAmount(
+  amount: number,
+  payments: PaymentRecord[],
+  message: string,
+) {
+  if (sum(payments) > Number(amount || 0)) {
+    throw new Error(message);
+  }
+}
+
 function attachmentSummary(attachments: AttachmentRecord[]) {
   return {
     count: attachments.length,
@@ -164,7 +178,7 @@ function contractListItem(contract: StoredContract, store: StoreShape): Contract
   return {
     ...normalized,
     paidAmount,
-    unpaidAmount: normalized.contractAmount - paidAmount,
+    unpaidAmount: unpaidAmount(normalized.contractAmount, paidAmount),
     supplementCount: store.supplements.filter((item) => item.contractId === contract.id).length,
     attachmentSummary: attachmentSummary(
       store.attachments.filter(
@@ -196,7 +210,7 @@ function buildSummary(
       const paidAmount = item.paidAmount + supplementPaidTotal(store, item.id);
       summary.contractAmount += contractAmount;
       summary.paidAmount += paidAmount;
-      summary.unpaidAmount += contractAmount - paidAmount;
+      summary.unpaidAmount += unpaidAmount(contractAmount, paidAmount);
       if (
         bondRequiresReturn(item.performanceBondEnabled, item.performanceBondType) &&
         !item.performanceBondReturned
@@ -232,7 +246,7 @@ function supplementListItem(
     supplementAmount: supplement.supplementAmount,
     supplementDate: supplement.supplementDate,
     paidAmount,
-    unpaidAmount: supplement.supplementAmount - paidAmount,
+    unpaidAmount: unpaidAmount(supplement.supplementAmount, paidAmount),
     attachmentSummary: attachmentSummary(
       store.attachments.filter(
         (item) =>
@@ -349,6 +363,11 @@ export function mockGetContractDetail(contractId: string): ContractDetail {
 export function mockCreateContract(payload: ContractPayload): ContractDetail {
   const store = readStore();
   const createdAt = now();
+  assertPaymentTotalWithinAmount(
+    payload.contract.contractAmount,
+    payload.payments,
+    "合同收款金额不能超过合同金额",
+  );
   const contract: StoredContract = {
     ...payload.contract,
     id: payload.contract.id || id(),
@@ -372,6 +391,11 @@ export function mockUpdateContract(
   if (index < 0) {
     throw new Error("合同不存在");
   }
+  assertPaymentTotalWithinAmount(
+    payload.contract.contractAmount,
+    payload.payments,
+    "合同收款金额不能超过合同金额",
+  );
   store.contracts[index] = {
     ...store.contracts[index],
     ...payload.contract,
@@ -426,6 +450,11 @@ export function mockCreateSupplement(
 ): SupplementDetail {
   const store = readStore();
   const createdAt = now();
+  assertPaymentTotalWithinAmount(
+    payload.supplement.supplementAmount,
+    payload.payments,
+    "增补合同收款金额不能超过增加合同金额",
+  );
   const supplement: StoredSupplement = {
     ...payload.supplement,
     id: payload.supplement.id || id(),
@@ -448,6 +477,11 @@ export function mockUpdateSupplement(
   if (index < 0) {
     throw new Error("增补合同不存在");
   }
+  assertPaymentTotalWithinAmount(
+    payload.supplement.supplementAmount,
+    payload.payments,
+    "增补合同收款金额不能超过增加合同金额",
+  );
   store.supplements[index] = {
     ...store.supplements[index],
     ...payload.supplement,
